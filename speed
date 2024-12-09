@@ -1,0 +1,69 @@
+# Script para otimizar o Windows 10 em um computador recém-formatado
+
+# 1. Alterar o nome do computador
+$novoNome = "MeuNotebook" # Substitua pelo nome desejado
+Write-Host "Alterando o nome do computador para: $novoNome"
+Rename-Computer -NewName $novoNome -Force
+
+# 2. Ativar o cache de gravação em sombra no SSD
+Write-Host "Ativando o cache de gravação em sombra no SSD"
+(Get-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\iaStorV\Parameters\Device") | ForEach-Object {
+    Set-ItemProperty -Path $_.PSPath -Name "EnableWriteCache" -Value 1
+}
+
+# 3. Alterar o plano de energia para Alto Desempenho
+Write-Host "Alterando o plano de energia para Alto Desempenho"
+$powerPlan = Get-CimInstance -Namespace "root\cimv2\power" -ClassName Win32_PowerPlan | Where-Object {$_.ElementName -eq "Alto desempenho"}
+if ($powerPlan) {
+    powercfg -setactive $powerPlan.InstanceID
+} else {
+    Write-Host "Plano de energia Alto Desempenho não encontrado. Criando novo plano."
+    powercfg -duplicatescheme SCHEME_MIN
+}
+
+# 4. Desativar aplicativos em segundo plano desnecessários
+Write-Host "Desativando aplicativos em segundo plano"
+Set-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\BackgroundAccessApplications" -Name "GlobalUserDisabled" -Value 1
+
+# 5. Configurar atualizações para reinicialização automática fora do horário ativo
+Write-Host "Configurando atualizações para reinicialização fora do horário ativo"
+Set-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU" -Name "AlwaysAutoRebootAtScheduledTime" -Value 1 -Force
+
+# 6. Ativar Limpeza Automática de Disco
+Write-Host "Ativando limpeza automática do disco"
+$TaskName = "LimpezaAutomatica"
+$TaskDescription = "Executa a limpeza de disco automaticamente"
+$TaskAction = New-ScheduledTaskAction -Execute "cleanmgr.exe" -Argument "/sagerun:1"
+$TaskTrigger = New-ScheduledTaskTrigger -Daily -At "3:00AM"
+$TaskPrincipal = New-ScheduledTaskPrincipal -UserId "SYSTEM" -LogonType ServiceAccount
+Register-ScheduledTask -TaskName $TaskName -Description $TaskDescription -Action $TaskAction -Trigger $TaskTrigger -Principal $TaskPrincipal
+
+# 7. Habilitar TRIM no SSD
+Write-Host "Habilitando TRIM para otimizar o SSD"
+defrag.exe c: /O
+
+# 8. Reduzir tempo de espera no menu de boot
+Write-Host "Reduzindo o tempo de espera no menu de boot"
+bcdedit /timeout 5
+
+# 9. Desabilitar serviços desnecessários (Exemplo: Fax, Bluetooth se não utilizado)
+Write-Host "Desabilitando serviços desnecessários"
+Disable-Service -Name "Fax" -Force
+Disable-Service -Name "bthserv" -Force
+
+# 10. Configurar o desempenho do Windows mantendo Peek e miniaturas
+Write-Host "Configurando o desempenho do Windows mantendo Peek e miniaturas"
+$performanceKey = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects"
+New-ItemProperty -Path $performanceKey -Name "VisualFXSetting" -Value 2 -Force
+
+$peekKey = "HKCU:\Software\Microsoft\Windows\DWM"
+Set-ItemProperty -Path $peekKey -Name "EnableAeroPeek" -Value 1
+
+# 11. Configurar fontes com cantos arredondados
+Write-Host "Configurando fontes com cantos arredondados"
+$fontKey = "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Fonts"
+Set-ItemProperty -Path $fontKey -Name "Segoe UI (TrueType)" -Value "Segoe UI Variable Display.ttf"
+
+# Reiniciar o computador para aplicar todas as mudanças
+Write-Host "Todas as configurações foram aplicadas. Reiniciando o computador."
+Restart-Computer -Force
