@@ -1,121 +1,161 @@
 # Script para otimizar o Windows 10 em um computador recém-formatado
 
-Function Menu {
-    Clear-Host
-    Write-Host "Menu de Opções:" -ForegroundColor Cyan
-    Write-Host "1 - Otimização do sistema" -ForegroundColor Yellow
-    Write-Host "2 - Criar conta de administrador" -ForegroundColor Yellow
-    Write-Host "3 - Ativação de recursos" -ForegroundColor Yellow
-    Write-Host "0 - Sair" -ForegroundColor Yellow
-    $opcao = Read-Host "Escolha uma opção"
-    return $opcao
-}
-
-Function Otimizacao {
-    # 1. Alterar o nome do computador de forma interativa
+# Função para alterar o nome do computador
+function Alterar-NomeComputador {
     $novoNome = Read-Host "Digite o novo nome para o computador"
     Write-Host "Alterando o nome do computador para: $novoNome"
     Rename-Computer -NewName $novoNome -Force
+}
 
-    # 2. Ativar o cache de gravação em sombra no SSD
+# Função para criar uma conta de administrador
+function Criar-ContaAdministrador {
+    $usuario = Read-Host "Digite o nome do usuário para a conta de administrador"
+    $senha = Read-Host "Digite a senha para a conta de administrador" -AsSecureString
+    New-LocalUser -Name $usuario -Password $senha -FullName "$usuario (Admin)" -Description "Conta de administrador criada pelo script" -PasswordNeverExpires
+    Add-LocalGroupMember -Group "Administrators" -Member $usuario
+    Write-Host "Conta de administrador $usuario criada com sucesso."
+}
+
+# Função para ativar o cache de gravação em sombra no SSD
+function Ativar-CacheSSD {
     Write-Host "Ativando o cache de gravação em sombra no SSD"
-    $cachePath = "HKLM:\SYSTEM\CurrentControlSet\Services\iaStorV\Parameters\Device"
-    if (Test-Path $cachePath) {
-        (Get-ItemProperty -Path $cachePath) | ForEach-Object {
-            Set-ItemProperty -Path $_.PSPath -Name "EnableWriteCache" -Value 1
-        }
-    } else {
-        Write-Host "Caminho do registro para cache de gravação não encontrado." -ForegroundColor Red
+    (Get-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\iaStorV\Parameters\Device") | ForEach-Object {
+        Set-ItemProperty -Path $_.PSPath -Name "EnableWriteCache" -Value 1
     }
+}
 
-    # 3. Alterar o plano de energia para Alto Desempenho
+# Função para alterar o plano de energia para Alto Desempenho
+function Alterar-PlanoEnergia {
     Write-Host "Alterando o plano de energia para Alto Desempenho"
     $powerPlan = Get-CimInstance -Namespace "root\cimv2\power" -ClassName Win32_PowerPlan | Where-Object {$_.ElementName -eq "Alto desempenho"}
     if ($powerPlan) {
         powercfg -setactive $powerPlan.InstanceID
     } else {
-        Write-Host "Plano de energia Alto Desempenho não encontrado." -ForegroundColor Red
+        Write-Host "Plano de energia Alto Desempenho não encontrado. Criando novo plano."
+        powercfg -duplicatescheme SCHEME_MIN
     }
+}
 
-    # 4. Desativar aplicativos em segundo plano desnecessários
+# Função para desativar aplicativos em segundo plano
+function Desativar-AppSegundoPlano {
     Write-Host "Desativando aplicativos em segundo plano"
-    $backgroundAppsPath = "HKCU:\Software\Microsoft\Windows\CurrentVersion\BackgroundAccessApplications"
-    if (Test-Path $backgroundAppsPath) {
-        Set-ItemProperty -Path $backgroundAppsPath -Name "GlobalUserDisabled" -Value 1
-    } else {
-        Write-Host "Caminho do registro para aplicativos em segundo plano não encontrado." -ForegroundColor Red
-    }
+    Set-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\BackgroundAccessApplications" -Name "GlobalUserDisabled" -Value 1
+}
 
-    # 5. Configurar atualizações para reinicialização automática fora do horário ativo
+# Função para configurar atualizações para reinicialização automática fora do horário ativo
+function Configurar-Atualizacoes {
     Write-Host "Configurando atualizações para reinicialização fora do horário ativo"
-    $updatePath = "HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU"
-    if (Test-Path $updatePath) {
-        Set-ItemProperty -Path $updatePath -Name "AlwaysAutoRebootAtScheduledTime" -Value 1 -Force
-    } else {
-        Write-Host "Caminho do registro para atualizações não encontrado." -ForegroundColor Red
+    $path = "HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU"
+    if (!(Test-Path $path)) {
+        New-Item -Path $path -Force | Out-Null
     }
+    Set-ItemProperty -Path $path -Name "AlwaysAutoRebootAtScheduledTime" -Value 1 -Force
+}
 
-    # 6. Ativar Limpeza Automática de Disco
+# Função para ativar limpeza automática de disco
+function Ativar-LimpezaDisco {
     Write-Host "Ativando limpeza automática do disco"
     $TaskName = "LimpezaAutomatica"
     $TaskDescription = "Executa a limpeza de disco automaticamente"
     $TaskAction = New-ScheduledTaskAction -Execute "cleanmgr.exe" -Argument "/sagerun:1"
     $TaskTrigger = New-ScheduledTaskTrigger -Daily -At "3:00AM"
     $TaskPrincipal = New-ScheduledTaskPrincipal -UserId "SYSTEM" -LogonType ServiceAccount
-    Register-ScheduledTask -TaskName $TaskName -Description $TaskDescription -Action $TaskAction -Trigger $TaskTrigger -Principal $TaskPrincipal
+    
+    $existingTask = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
+    if ($existingTask) {
+        Set-ScheduledTask -TaskName $TaskName -Action $TaskAction -Trigger $TaskTrigger -Principal $TaskPrincipal
+    } else {
+        Register-ScheduledTask -TaskName $TaskName -Description $TaskDescription -Action $TaskAction -Trigger $TaskTrigger -Principal $TaskPrincipal
+    }
+}
 
-    # 7. Habilitar TRIM no SSD
+# Função para habilitar TRIM no SSD
+function Ativar-TRIM {
     Write-Host "Habilitando TRIM para otimizar o SSD"
-    defrag.exe c: /O
+    fsutil behavior set disabledeletenotify 0
+}
 
-    # 8. Reduzir tempo de espera no menu de boot
+# Função para reduzir tempo de espera no menu de boot
+function Reduzir-TempoBoot {
     Write-Host "Reduzindo o tempo de espera no menu de boot"
     bcdedit /timeout 5
+}
 
-    # 9. Desabilitar serviços desnecessários
+# Função para desabilitar serviços desnecessários
+function Desabilitar-Servicos {
     Write-Host "Desabilitando serviços desnecessários"
-    Get-Service -Name "Fax", "bthserv" -ErrorAction SilentlyContinue | ForEach-Object {
-        Set-Service -Name $_.Name -StartupType Disabled
-    }
+    Set-Service -Name "Fax" -StartupType Disabled
+    Set-Service -Name "bthserv" -StartupType Disabled
+}
 
-    # 10. Configurar o desempenho do Windows mantendo Peek e miniaturas
+# Função para configurar desempenho mantendo Peek e miniaturas
+function Configurar-Desempenho {
     Write-Host "Configurando o desempenho do Windows mantendo Peek e miniaturas"
     $performanceKey = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects"
     New-ItemProperty -Path $performanceKey -Name "VisualFXSetting" -Value 2 -Force
 
     $peekKey = "HKCU:\Software\Microsoft\Windows\DWM"
     Set-ItemProperty -Path $peekKey -Name "EnableAeroPeek" -Value 1
+}
 
-    # 11. Configurar fontes com cantos arredondados
+# Função para configurar fontes com cantos arredondados
+function Configurar-Fontes {
     Write-Host "Configurando fontes com cantos arredondados"
     $fontKey = "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Fonts"
-    if (Test-Path $fontKey) {
-        Set-ItemProperty -Path $fontKey -Name "Segoe UI (TrueType)" -Value "Segoe UI Variable Display.ttf"
-    } else {
-        Write-Host "Caminho do registro para fontes não encontrado." -ForegroundColor Red
+    Set-ItemProperty -Path $fontKey -Name "Segoe UI (TrueType)" -Value "Segoe UI Variable Display.ttf"
+}
+
+# Menu principal
+function Menu {
+    Clear-Host
+    Write-Host "Menu de Opções:"
+    Write-Host "1 - Otimização do sistema"
+    Write-Host "2 - Criar conta de administrador"
+    Write-Host "3 - Ativação de recursos"
+    Write-Host "0 - Sair"
+
+    $opcao = Read-Host "Escolha uma opção"
+
+    switch ($opcao) {
+        1 {
+            Alterar-NomeComputador
+            Ativar-CacheSSD
+            Alterar-PlanoEnergia
+            Desativar-AppSegundoPlano
+            Configurar-Atualizacoes
+            Ativar-LimpezaDisco
+            Ativar-TRIM
+            Reduzir-TempoBoot
+            Desabilitar-Servicos
+            Configurar-Desempenho
+            Configurar-Fontes
+        }
+        2 {
+            Criar-ContaAdministrador
+        }
+        3 {
+            Write-Host "Função de ativação de recursos ainda não implementada."
+        }
+        0 {
+            Write-Host "Saindo do script."
+            return
+        }
+        default {
+            Write-Host "Opção inválida. Tente novamente."
+        }
     }
-}
 
-Function CriarContaAdministrador {
-    $userName = Read-Host "Digite o nome da nova conta de administrador"
-    $password = Read-Host "Digite a senha para a nova conta" -AsSecureString
-    New-LocalUser -Name $userName -Password $password -Description "Conta de administrador criada pelo script" -FullName $userName
-    Add-LocalGroupMember -Group "Administradores" -Member $userName
-    Write-Host "Conta de administrador $userName criada com sucesso."
-}
-
-Function AtivacaoRecursos {
-    Write-Host "Função para ativar recursos será adicionada futuramente."
-}
-
-Do {
-    $opcao = Menu
-    Switch ($opcao) {
-        1 { Otimizacao }
-        2 { CriarContaAdministrador }
-        3 { AtivacaoRecursos }
-        0 { Write-Host "Saindo..."; Exit }
-        Default { Write-Host "Opção inválida, tente novamente." -ForegroundColor Red }
-    }
     Pause
-} While ($opcao -ne 0)
+    Menu
+}
+
+# Executar o script como administrador
+if (-NOT ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole] "Administrator"))  
+{  
+    $arguments = "& '" + $myinvocation.mycommand.definition + "'"
+    Start-Process powershell -Verb runAs -ArgumentList $arguments
+    Exit
+}
+
+Menu
+
